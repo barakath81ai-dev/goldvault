@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>GoldVault</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#D4AF37">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%AA%99%3C/text%3E%3C/svg%3E">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<style>
+  html,body{margin:0;padding:0;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}
+  *{box-sizing:border-box;}
+  input,select,textarea{font-size:16px;}
+  ::-webkit-scrollbar{width:0;height:0;}
+  @media print{ .no-print{display:none!important;} .print-only{display:block!important;} }
+  .print-only{display:none;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useMemo,useRef,createContext,useContext}=React;
+
+/* ── CONSTANTS ── */
+const SYM={SAR:"SAR ",INR:"₹",USD:"$",SGD:"S$"};
+const LOCALE={SAR:"en-US",INR:"en-IN",USD:"en-US",SGD:"en-US"};
+const CURRENCIES=["SAR","INR","USD","SGD"];
+const PURITY={"24K":1,"22K":0.9167,"21K":0.875,"18K":0.75};
+const PURITIES=["24K","22K","21K","18K"];
+const TYPES=["Coin","Bar","Biscuit","Jewelry","Other"];
+const LOCATIONS=["Home","Bank Locker","Bank Deposit","Office","Other"];
+const LOC_EMO={Home:"🏠","Bank Locker":"🔒","Bank Deposit":"🏦",Office:"🏢",Other:"💼"};
+const COLORS=["#D4AF37","#F5C542","#C9A227","#E6BE8A","#B8860B","#8B6F1E","#caa04a"];
+const EMO={plus:"➕",search:"🔍",edit:"✏️",trash:"🗑️",sell:"💵",gift:"🎁",revert:"↩️",close:"✖️",
+  up:"📈",down:"📉",scale:"⚖️",paperclip:"📎",image:"🖼️",upload:"⬆️",camera:"📷",refresh:"🔄",
+  sun:"☀️",moon:"🌙",backup:"💾",import:"📂",palette:"🎨",userplus:"➕👤",shield:"🛡️",eye:"👁️",
+  logout:"🚪",users:"👥",check:"✅",back:"⬅️",key:"🔑",sparkles:"✨",download:"⬇️",excel:"📊",
+  file:"📄",coins:"🪙",dash:"📊",hold:"💰",rep:"📄",set:"⚙️",wallet:"💼"};
+
+/* ── THEME ── */
+const ACCENTS={gold:{main:"#D4AF37",light:"#F5C542",deep:"#8a6d12"},emerald:{main:"#10b981",light:"#34d399",deep:"#047857"},
+  blue:{main:"#3b82f6",light:"#60a5fa",deep:"#1d4ed8"},rose:{main:"#f43f5e",light:"#fb7185",deep:"#be123c"},
+  purple:{main:"#8b5cf6",light:"#a78bfa",deep:"#6d28d9"}};
+const ACCENT_LIST=[["gold","Gold"],["emerald","Emerald"],["blue","Sapphire"],["rose","Ruby"],["purple","Amethyst"]];
+function buildTheme(mode,ak){
+  const A=ACCENTS[ak]||ACCENTS.gold,dk=mode!=="light";
+  const b=dk?{bg:"#0a0a0a",surface:"#171717",surface2:"#262626",border:"#262626",text:"#fafafa",dim:"#a1a1aa",faint:"#71717a",overlay:"rgba(0,0,0,0.75)",pos:"#4ade80",neg:"#f87171",inputBg:"#262626"}
+    :{bg:"#f4f4f5",surface:"#ffffff",surface2:"#f4f4f5",border:"#e4e4e7",text:"#18181b",dim:"#52525b",faint:"#a1a1aa",overlay:"rgba(0,0,0,0.5)",pos:"#16a34a",neg:"#dc2626",inputBg:"#f4f4f5"};
+  return{...b,mode:dk?"dark":"light",accent:A.main,accent2:A.light,accentText:dk?A.light:A.deep,
+    grad:`linear-gradient(135deg,${A.main},${A.light})`,
+    headerGrad:dk?`linear-gradient(180deg,${A.deep}40,${b.bg})`:`linear-gradient(180deg,${A.light}33,${b.bg})`};
+}
+const ThemeCtx=createContext(buildTheme("dark","gold"));
+const useT=()=>useContext(ThemeCtx);
+const AuthCtx=createContext({user:null,isAdmin:false});
+const useAuth=()=>useContext(AuthCtx);
+
+/* ── UTILS ── */
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const today=()=>new Date().toISOString().slice(0,10);
+const num=v=>(v===""||v==null||isNaN(Number(v)))?0:Number(v);
+const fmt=(n,c)=>SYM[c]+num(n).toLocaleString(LOCALE[c],{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtW=g=>num(g).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:3})+" g";
+const effRate=(p,c,rates)=>{const r=rates[c]||{};return(r[p]!=null&&r[p]!=="")?num(r[p]):num(r["24K"])*(PURITY[p]??1);};
+const itemCost=it=>num(it.weight)*num(it.ratePerGram)+num(it.making)+num(it.tax)+num(it.other);
+const curVal=(it,rates)=>num(it.weight)*effRate(it.purity,it.currency,rates);
+const saleProceeds=it=>num(it.weight)*num(it.saleRatePerGram);
+const sumBy=(arr,fn)=>arr.reduce((s,x)=>s+fn(x),0);
+function groupBy(arr,key){const o={};for(const x of arr){const k=x[key];(o[k]=o[k]||[]).push(x);}return o;}
+
+async function hashPin(pin){
+  try{const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode("gv_std_"+pin+"_x"));return[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");}
+  catch{return btoa("gv_"+pin);}
+}
+
+/* ── INDEXEDDB STORAGE ── */
+const DB_NAME="goldvault_db",STORE="kv";
+function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains(STORE))db.createObjectStore(STORE);};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function idbGet(key){const db=await openDB();return new Promise((res,rej)=>{const tx=db.transaction(STORE,"readonly");const r=tx.objectStore(STORE).get(key);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function idbSet(key,val){const db=await openDB();return new Promise((res,rej)=>{const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).put(val,key);tx.oncomplete=()=>res(true);tx.onerror=()=>rej(tx.error);});}
+async function idbDel(key){const db=await openDB();return new Promise((res,rej)=>{const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).delete(key);tx.oncomplete=()=>res(true);tx.onerror=()=>rej(tx.error);});}
+const attKey=id=>"att:"+id;
+async function putAtt(id,d){try{await idbSet(attKey(id),d);}catch(e){console.error(e);}}
+async function getAtt(id){try{return await idbGet(attKey(id));}catch{return null;}}
+async function delAtt(id){try{await idbDel(attKey(id));}catch{}}
+
+function readDU(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
+async function compress(file){
+  const d=await readDU(file);
+  return new Promise(res=>{
+    const img=new Image();
+    img.onload=()=>{
+      const max=1280;let w=img.width,h=img.height;
+      if(w>h&&w>max){h=h*max/w;w=max;}else if(h>max){w=w*max/h;h=max;}
+      const c=document.createElement("canvas");c.width=w;c.height=h;
+      c.getContext("2d").drawImage(img,0,0,w,h);
+      try{res(c.toDataURL("image/jpeg",0.82));}catch{res(d);}
+    };img.onerror=()=>res(d);img.src=d;
+  });
+}
+
+const defaultRates={SAR:{"24K":"320","22K":"","21K":"","18K":""},INR:{"24K":"7400","22K":"","21K":"","18K":""},USD:{"24K":"86","22K":"","21K":"","18K":""},SGD:{"24K":"116","22K":"","21K":"","18K":""}};
+const defaultSettings={currency:"SAR",rates:defaultRates,theme:{mode:"dark",accent:"gold"},lockTimeout:5};
+const SAMPLE=cur=>[
+  {id:uid(),name:"1oz Britannia Coin",type:"Coin",weight:31.1,purity:"24K",purchaseDate:"2024-03-12",ratePerGram:cur==="INR"?6200:cur==="SAR"?268:cur==="USD"?72:98,making:cur==="INR"?1500:60,tax:cur==="INR"?1100:40,other:0,dealer:"Malabar Gold",location:"Bank Locker",currency:cur,notes:"Investment grade",status:"In Portfolio",attachments:[]},
+  {id:uid(),name:"10g Bar PAMP",type:"Bar",weight:10,purity:"24K",purchaseDate:"2024-08-01",ratePerGram:cur==="INR"?6900:cur==="SAR"?290:cur==="USD"?78:105,making:cur==="INR"?400:15,tax:cur==="INR"?600:20,other:0,dealer:"Tanishq",location:"Home",currency:cur,notes:"",status:"In Portfolio",attachments:[]},
+  {id:uid(),name:"5g Biscuit",type:"Biscuit",weight:5,purity:"24K",purchaseDate:"2023-06-15",ratePerGram:cur==="INR"?5500:cur==="SAR"?235:cur==="USD"?63:85,making:200,tax:100,other:0,dealer:"MMTC",location:"Bank Locker",currency:cur,notes:"",status:"Sold",saleDate:"2025-12-01",saleRatePerGram:cur==="INR"?7300:cur==="SAR"?315:cur==="USD"?84:114,buyer:"Local jeweller",saleNotes:"Booked profit",attachments:[]},
+];
+
+/* ── PRIMITIVES ── */
+function Em({children,size=16,style}){return <span style={{fontSize:size,lineHeight:1,display:"inline-block",...style}}>{children}</span>;}
+function Card({children,className=""}){const T=useT();return <div className={"rounded-2xl p-4 "+className} style={{background:T.surface,border:`1px solid ${T.border}`}}>{children}</div>;}
+function Field({label,children}){const T=useT();return <label className="block"><span className="text-[11px] mb-1 block" style={{color:T.dim}}>{label}</span>{children}</label>;}
+function TIn(p){const T=useT();return <input {...p} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{background:T.inputBg,border:`1px solid ${T.border}`,color:T.text}}/>;}
+function TSel({children,...p}){const T=useT();return <select {...p} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{background:T.inputBg,border:`1px solid ${T.border}`,color:T.text}}>{children}</select>;}
+function TArea(p){const T=useT();return <textarea {...p} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{background:T.inputBg,border:`1px solid ${T.border}`,color:T.text}}/>;}
+function IBtn({emoji,onClick,title,danger}){const T=useT();return <button title={title} onClick={onClick} className="p-1.5 rounded-lg hover:opacity-70" style={{color:danger?T.neg:T.dim}}><Em size={16}>{emoji}</Em></button>;}
+
+/* ── PIN UI ── */
+function PinDots({len,max=4,shake}){
+  const T=useT();
+  return(<div className={`flex gap-4 justify-center ${shake?"animate-bounce":""}`}>
+    {Array.from({length:max}).map((_,i)=>(<div key={i} className="w-4 h-4 rounded-full transition-all" style={{background:i<len?T.accent:"transparent",border:`2.5px solid ${i<len?T.accent:T.faint}`}}/>))}
+  </div>);
+}
+function PinKeypad({onDigit,onBack}){
+  const T=useT();
+  return(<div className="space-y-3">
+    {[["1","2","3"],["4","5","6"],["7","8","9"],["","0","⌫"]].map((row,r)=>(
+      <div key={r} className="flex gap-3 justify-center">
+        {row.map((k,c)=>k===""?<div key={c} className="w-20 h-14"/>:(
+          <button key={c} onClick={()=>k==="⌫"?onBack():onDigit(k)} className="w-20 h-14 rounded-2xl text-xl font-semibold active:scale-95 transition" style={{background:k==="⌫"?"transparent":T.surface,color:k==="⌫"?T.dim:T.text,border:`1px solid ${k==="⌫"?"transparent":T.border}`}}>{k}</button>
+        ))}
+      </div>
+    ))}
+  </div>);
+}
+
+function LockScreen({users,onUnlock}){
+  const T=useT();
+  const[sel,setSel]=useState(users.length===1?users[0]:null);
+  const[pin,setPin]=useState(""),[err,setErr]=useState(""),[shake,setShake]=useState(false);
+  function addDigit(d){if(pin.length>=4)return;const np=pin+d;setPin(np);if(np.length===4)check(np);}
+  function back(){setPin(p=>p.slice(0,-1));setErr("");}
+  async function check(p){const h=await hashPin(p);if(h===sel.pinHash)onUnlock(sel);else{setShake(true);setErr("Wrong PIN");setTimeout(()=>{setPin("");setShake(false);setErr("");},900);}}
+  if(!sel)return(
+    <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{background:T.bg}}>
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-3" style={{background:T.grad}}><Em size={32}>🪙</Em></div>
+      <h1 className="text-2xl font-bold mb-1" style={{color:T.accentText}}>GoldVault</h1>
+      <p className="text-sm mb-8" style={{color:T.faint}}>Select your account to continue</p>
+      <div className="flex flex-col gap-3 w-full max-w-xs">
+        {users.map(u=>(
+          <button key={u.id} onClick={()=>{setSel(u);setPin("");setErr("");}} className="flex items-center gap-4 p-4 rounded-2xl text-left active:scale-[0.98]" style={{background:T.surface,border:`1px solid ${T.border}`}}>
+            <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold shrink-0" style={{background:T.grad,color:"#1a1a1a"}}>{(u.name||"?")[0].toUpperCase()}</div>
+            <div><div className="font-semibold" style={{color:T.text}}>{u.name}</div>
+              <div className="text-xs flex items-center gap-1 mt-0.5" style={{color:u.role==="admin"?T.accentText:T.faint}}><Em size={11}>{u.role==="admin"?"🛡️":"👁️"}</Em>{u.role==="admin"?"Admin — full access":"Viewer — read only"}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+  return(
+    <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{background:T.bg}}>
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{background:T.grad}}><Em size={32}>🪙</Em></div>
+      {users.length>1&&<button onClick={()=>{setSel(null);setPin("");setErr("");}} className="flex items-center gap-1 text-sm mb-3" style={{color:T.dim}}><Em size={14}>⬅️</Em>Change user</button>}
+      <div className="w-14 h-14 rounded-full flex items-center justify-center text-xl font-bold mb-2" style={{background:T.grad,color:"#1a1a1a"}}>{(sel.name||"?")[0].toUpperCase()}</div>
+      <p className="font-semibold mb-0.5" style={{color:T.text}}>Hi, {sel.name}!</p>
+      <p className="text-sm mb-6" style={{color:T.faint}}>Enter your 4-digit PIN</p>
+      <div className="mb-2"><PinDots len={pin.length} shake={shake}/></div>
+      {err?<p className="text-sm mb-3" style={{color:T.neg}}>{err}</p>:<div className="mb-3 h-5"/>}
+      <PinKeypad onDigit={addDigit} onBack={back}/>
+    </div>
+  );
+}
+
+function SetupScreen({onSetup}){
+  const T=useT();
+  const[step,setStep]=useState(1),[name,setName]=useState(""),[pin,setPin]=useState("");
+  const[pinStep,setPinStep]=useState(1),[cur,setCur]=useState(""),[err,setErr]=useState(""),[shake,setShake]=useState(false);
+  function addDigit(d){
+    if(cur.length>=4)return;const np=cur+d;setCur(np);
+    if(np.length===4){
+      if(pinStep===1){setPin(np);setPinStep(2);setCur("");}
+      else if(np===pin)finalize(pin);
+      else{setShake(true);setErr("PINs don't match — try again");setTimeout(()=>{setCur("");setPin("");setPinStep(1);setShake(false);setErr("");},900);}
+    }
+  }
+  function back(){setCur(p=>p.slice(0,-1));setErr("");}
+  async function finalize(p){const pinHash=await hashPin(p);onSetup({id:uid(),name:name.trim(),role:"admin",pinHash});}
+  return(
+    <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{background:T.bg}}>
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-3" style={{background:T.grad}}><Em size={32}>🪙</Em></div>
+      <h1 className="text-2xl font-bold mb-1" style={{color:T.accentText}}>Welcome to GoldVault</h1>
+      <p className="text-sm mb-8 text-center max-w-xs" style={{color:T.faint}}>Set up your admin account to protect your gold portfolio.</p>
+      {step===1?(
+        <div className="w-full max-w-xs space-y-4">
+          <div><span className="text-sm font-medium block mb-1" style={{color:T.dim}}>Your name</span><TIn value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Ali"/></div>
+          <button disabled={!name.trim()} onClick={()=>setStep(2)} className="w-full py-3 rounded-xl font-semibold disabled:opacity-40" style={{background:T.grad,color:"#1a1a1a"}}>Set PIN →</button>
+        </div>
+      ):(
+        <div className="flex flex-col items-center w-full">
+          <div className="flex items-center gap-2 mb-1"><Em size={18}>🔑</Em><p className="font-semibold" style={{color:T.text}}>{pinStep===1?"Set a 4-digit PIN":"Confirm your PIN"}</p></div>
+          <p className="text-xs mb-6 text-center" style={{color:T.faint}}>{pinStep===1?"This PIN protects your vault":"Enter the same PIN again"}</p>
+          <div className="mb-2"><PinDots len={cur.length} shake={shake}/></div>
+          {err?<p className="text-sm mb-3 text-center" style={{color:T.neg}}>{err}</p>:<div className="mb-3 h-5"/>}
+          <PinKeypad onDigit={addDigit} onBack={back}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── CHARTS (CSS only) ── */
+function Donut({data,cur}){
+  const T=useT();
+  const total=sumBy(data,d=>d.value)||1;let acc=0;
+  const stops=data.map((d,i)=>{const s=acc/total*360;acc+=d.value;const e=acc/total*360;return `${COLORS[i%COLORS.length]} ${s}deg ${e}deg`;}).join(", ");
+  return(<div className="flex items-center gap-4 flex-wrap">
+    <div style={{width:110,height:110,borderRadius:"50%",background:`conic-gradient(${stops})`,flexShrink:0,boxShadow:`0 0 0 6px ${T.bg} inset`}}/>
+    <div className="space-y-1.5 text-xs flex-1 min-w-[120px]">
+      {data.map((d,i)=>(<div key={d.name} className="flex items-center gap-2"><span style={{width:9,height:9,borderRadius:9999,background:COLORS[i%COLORS.length],display:"inline-block",flexShrink:0}}/><span style={{color:T.dim}} className="truncate">{d.name}</span><span style={{color:T.text}} className="font-medium ml-auto">{fmt(d.value,cur)}</span></div>))}
+    </div>
+  </div>);
+}
+function CompareBar({invested,current,cur}){
+  const T=useT();const max=Math.max(invested,current,1);
+  return(<div className="space-y-3">
+    <div><div className="flex justify-between text-xs mb-1"><span style={{color:T.dim}}>Invested</span><span style={{color:T.text}}>{fmt(invested,cur)}</span></div><div className="h-3 rounded-full overflow-hidden" style={{background:T.surface2}}><div className="h-full rounded-full transition-all" style={{width:(invested/max*100)+"%",background:T.accent2}}/></div></div>
+    <div><div className="flex justify-between text-xs mb-1"><span style={{color:T.dim}}>Current</span><span style={{color:T.text}}>{fmt(current,cur)}</span></div><div className="h-3 rounded-full overflow-hidden" style={{background:T.surface2}}><div className="h-full rounded-full transition-all" style={{width:(current/max*100)+"%",background:T.accent}}/></div></div>
+  </div>);
+}
+
+/* ── MAIN APP ── */
+function GoldVault(){
+  const[loaded,setLoaded]=useState(false);
+  const[users,setUsers]=useState([]);
+  const[items,setItems]=useState([]);
+  const[settings,setSettings]=useState(defaultSettings);
+  const[session,setSession]=useState(null);
+  const[locked,setLocked]=useState(true);
+  const[tab,setTab]=useState("dash");
+  const[modal,setModal]=useState(null);
+  const[viewer,setViewer]=useState(null);
+  const[search,setSearch]=useState("");
+  const[statusFilter,setStatusFilter]=useState("All");
+  const lastAct=useRef(Date.now());
+
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const[u,it,st]=await Promise.all([idbGet("users"),idbGet("items"),idbGet("settings")]);
+        setUsers(u||[]);setItems(it||[]);
+        setSettings(s=>({...defaultSettings,...(st||{}),rates:{...defaultRates,...((st||{}).rates||{})},theme:{...defaultSettings.theme,...((st||{}).theme||{})}}));
+      }catch(e){console.error(e);}
+      setLoaded(true);
+    })();
+  },[]);
+  useEffect(()=>{if(!loaded)return;idbSet("items",items).catch(console.error);},[items,loaded]);
+  useEffect(()=>{if(!loaded)return;idbSet("settings",settings).catch(console.error);},[settings,loaded]);
+  useEffect(()=>{if(!loaded)return;idbSet("users",users).catch(console.error);},[users,loaded]);
+
+  useEffect(()=>{
+    if(!session)return;
+    const reset=()=>{lastAct.current=Date.now();};
+    ["click","touchstart","keydown"].forEach(e=>window.addEventListener(e,reset));
+    const iv=setInterval(()=>{const to=(settings.lockTimeout??5)*60*1000;if(to>0&&Date.now()-lastAct.current>to){setLocked(true);setSession(null);}},15000);
+    return()=>{["click","touchstart","keydown"].forEach(e=>window.removeEventListener(e,reset));clearInterval(iv);};
+  },[session,settings.lockTimeout]);
+
+  const T=useMemo(()=>buildTheme(settings.theme?.mode,settings.theme?.accent),[settings.theme]);
+  const cur=settings.currency,rates=settings.rates;
+  function unlock(u){setSession({userId:u.id,role:u.role});setLocked(false);lastAct.current=Date.now();}
+  function lock(){setLocked(true);setSession(null);}
+  const currentUser=users.find(u=>u.id===session?.userId);
+  const isAdmin=currentUser?.role==="admin";
+
+  const curItems=useMemo(()=>items.filter(i=>(i.currency||"SAR")===cur),[items,cur]);
+  const inPort=curItems.filter(i=>i.status==="In Portfolio");
+  const sold=curItems.filter(i=>i.status==="Sold");
+  const gifted=curItems.filter(i=>i.status==="Gifted");
+  const otherCurCount=items.length-curItems.length;
+
+  const m=useMemo(()=>{
+    const tw=sumBy(inPort,i=>num(i.weight)),pe=sumBy(inPort,i=>num(i.weight)*(PURITY[i.purity]??1));
+    const inv=sumBy(inPort,itemCost),cv=sumBy(inPort,i=>curVal(i,rates));
+    const un=cv-inv,rl=sumBy(sold,i=>saleProceeds(i)-itemCost(i)),gc=sumBy(gifted,itemCost);
+    return{totalWeight:tw,pureEq:pe,invested:inv,current:cv,unreal:un,unrealPct:inv?(un/inv)*100:0,realized:rl,giftedCost:gc};
+  },[inPort,sold,gifted,rates]);
+
+  const byType=useMemo(()=>Object.entries(groupBy(inPort,"type")).map(([k,v])=>({name:k,value:sumBy(v,i=>curVal(i,rates))})).filter(x=>x.value>0),[inPort,rates]);
+  const byLoc=useMemo(()=>Object.entries(groupBy(inPort,"location")).map(([k,v])=>({name:k,value:sumBy(v,i=>curVal(i,rates))})).filter(x=>x.value>0),[inPort,rates]);
+  const locBD=useMemo(()=>LOCATIONS.map(l=>({loc:l,val:sumBy(inPort.filter(i=>i.location===l),i=>curVal(i,rates)),wt:sumBy(inPort.filter(i=>i.location===l),i=>num(i.weight))})).filter(x=>x.val>0),[inPort,rates]);
+
+  function saveItem(data){if(data.id&&items.some(i=>i.id===data.id))setItems(items.map(i=>i.id===data.id?data:i));else setItems([...items,{...data,id:data.id||uid()}]);setModal(null);}
+  async function removeItem(id){if(!confirm("Delete permanently?"))return;const it=items.find(i=>i.id===id);if(it?.attachments)for(const a of it.attachments)await delAtt(a.id);setItems(items.filter(i=>i.id!==id));}
+  function revert(id){setItems(items.map(i=>i.id===id?{...i,status:"In Portfolio",saleDate:undefined,saleRatePerGram:undefined,buyer:undefined,saleNotes:undefined,giftDate:undefined,giftRecipient:undefined,giftNotes:undefined}:i));}
+
+  async function exportBackup(){
+    const att={};for(const it of items)for(const a of(it.attachments||[])){const d=await getAtt(a.id);if(d)att[a.id]=d;}
+    const blob=new Blob([JSON.stringify({app:"GoldVault",version:1,exportedAt:new Date().toISOString(),items,settings,attachments:att})],{type:"application/json"});
+    const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`GoldVault_backup_${today()}.json`;a.click();URL.revokeObjectURL(url);
+  }
+  async function importBackup(file){
+    try{
+      const d=JSON.parse(await file.text());
+      if(!d.items||!Array.isArray(d.items))throw new Error("Invalid file");
+      if(!confirm(`Import ${d.items.length} items? Replaces ALL current data.`))return;
+      if(d.attachments)for(const[id,data]of Object.entries(d.attachments))await putAtt(id,data);
+      setItems(d.items);
+      if(d.settings)setSettings(s=>({...defaultSettings,...d.settings,rates:{...defaultRates,...(d.settings.rates||{})},theme:{...defaultSettings.theme,...(d.settings.theme||{})}}));
+      alert("Imported successfully.");
+    }catch(e){alert("Import failed: "+e.message);}
+  }
+  function exportExcel(){
+    const wb=XLSX.utils.book_new();
+    const sum=[["GoldVault Portfolio Report"],["Currency",cur],["Generated",new Date().toLocaleString()],[],["Metric","Value"],["Items in portfolio",inPort.length],["Total weight (g)",+m.totalWeight.toFixed(3)],["Pure gold 24K eq.(g)",+m.pureEq.toFixed(3)],["Total invested",+m.invested.toFixed(2)],["Current value",+m.current.toFixed(2)],["Unrealized P&L",+m.unreal.toFixed(2)],["Unrealized %",+m.unrealPct.toFixed(2)],["Realized P&L",+m.realized.toFixed(2)],["Gifted cost",+m.giftedCost.toFixed(2)]];
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sum),"Summary");
+    const hr=inPort.map(i=>({Name:i.name,Type:i.type,Purity:i.purity,"Weight(g)":num(i.weight),"Purchase Date":i.purchaseDate,"Buy Rate/g":num(i.ratePerGram),Making:num(i.making),Tax:num(i.tax),Other:num(i.other),"Total Cost":+itemCost(i).toFixed(2),"Current Value":+curVal(i,rates).toFixed(2),"P&L":+(curVal(i,rates)-itemCost(i)).toFixed(2),Location:i.location,Dealer:i.dealer,Notes:i.notes}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(hr.length?hr:[{}]),"Holdings");
+    const sr=sold.map(i=>({Name:i.name,"Weight(g)":num(i.weight),"Total Cost":+itemCost(i).toFixed(2),"Sale Date":i.saleDate,"Proceeds":+saleProceeds(i).toFixed(2),"Realized P&L":+(saleProceeds(i)-itemCost(i)).toFixed(2),Buyer:i.buyer}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sr.length?sr:[{}]),"Sold");
+    const gr=gifted.map(i=>({Name:i.name,"Weight(g)":num(i.weight),"Cost":+itemCost(i).toFixed(2),"Gift Date":i.giftDate,Recipient:i.giftRecipient}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(gr.length?gr:[{}]),"Gifted");
+    XLSX.writeFile(wb,`GoldVault_${cur}_${today()}.xlsx`);
+  }
+
+  if(!loaded)return <div className="min-h-screen flex items-center justify-center" style={{background:"#0a0a0a",color:"#a1a1aa"}}>🪙 Loading your vault…</div>;
+  const defaultT=buildTheme(settings.theme?.mode,settings.theme?.accent);
+  if(users.length===0)return <ThemeCtx.Provider value={defaultT}><SetupScreen onSetup={async u=>{setUsers([u]);await idbSet("users",[u]);}}/></ThemeCtx.Provider>;
+  if(locked||!session)return <ThemeCtx.Provider value={defaultT}><LockScreen users={users} onUnlock={unlock}/></ThemeCtx.Provider>;
+
+  const filtered=curItems.filter(i=>statusFilter==="All"||i.status===statusFilter).filter(i=>!search||(i.name+i.dealer+i.type+i.location).toLowerCase().includes(search.toLowerCase()));
+  const NAV=[{k:"dash",l:"Dashboard",e:"📊"},{k:"hold",l:"Holdings",e:"💰"},{k:"rep",l:"Reports",e:"📄"},{k:"set",l:"Settings",e:"⚙️"}];
+
+  return(
+    <AuthCtx.Provider value={{user:currentUser,isAdmin}}>
+      <ThemeCtx.Provider value={T}>
+        <div className="min-h-screen" style={{background:T.bg,color:T.text,fontFamily:"ui-sans-serif,system-ui,sans-serif"}}>
+          <div className="no-print">
+            <header className="sticky top-0 z-20" style={{background:T.headerGrad,borderBottom:`1px solid ${T.border}`}}>
+              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{background:T.grad}}><Em size={20}>🪙</Em></div>
+                  <div><div className="font-bold tracking-wide" style={{color:T.accentText}}>GoldVault</div><div className="text-[10px] -mt-0.5" style={{color:T.faint}}>Gold Portfolio Manager</div></div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!isAdmin&&<span className="text-[10px] px-2 py-1 rounded-full flex items-center gap-1" style={{background:T.surface2,color:T.faint,border:`1px solid ${T.border}`}}><Em size={10}>👁️</Em> View only</span>}
+                  <select value={cur} onChange={e=>setSettings({...settings,currency:e.target.value})} className="rounded-lg px-2 py-1.5 text-sm font-semibold" style={{background:T.surface2,border:`1px solid ${T.border}`,color:T.accentText}}>{CURRENCIES.map(c=><option key={c} value={c}>{c}</option>)}</select>
+                  <button onClick={lock} title="Lock" className="p-1.5 rounded-lg" style={{color:T.faint}}><Em size={18}>🚪</Em></button>
+                </div>
+              </div>
+            </header>
+            <main className="max-w-5xl mx-auto px-4 pb-28 pt-4">
+              {otherCurCount>0&&<div className="mb-3 text-xs rounded-lg px-3 py-2" style={{color:"#d97706",background:"#f59e0b1a",border:"1px solid #f59e0b33"}}>{otherCurCount} item(s) in other currencies — switch to view.</div>}
+              {tab==="dash"&&<Dashboard {...{m,cur,byType,byLoc,locBD,inPort,sold,gifted,items,setItems}} onAdd={()=>setModal({mode:"add"})}/>}
+              {tab==="hold"&&<Holdings {...{filtered,cur,rates,search,setSearch,statusFilter,setStatusFilter}} onAdd={()=>setModal({mode:"add"})} onEdit={it=>setModal({mode:"edit",item:it})} onSell={it=>setModal({mode:"sell",item:it})} onGift={it=>setModal({mode:"gift",item:it})} onDelete={removeItem} onRevert={revert} onView={it=>setViewer(it)}/>}
+              {tab==="rep"&&<Reports {...{m,cur,inPort,sold,gifted}} onExcel={exportExcel} onPDF={()=>window.print()}/>}
+              {tab==="set"&&<SettingsView {...{settings,setSettings,cur,users,setUsers}} onExport={exportBackup} onImport={importBackup} onLock={lock}/>}
+            </main>
+            <nav className="fixed bottom-0 left-0 right-0 z-20" style={{background:T.surface,borderTop:`1px solid ${T.border}`}}>
+              <div className="max-w-5xl mx-auto grid grid-cols-4">
+                {NAV.map(n=>(<button key={n.k} onClick={()=>setTab(n.k)} className="py-2.5 flex flex-col items-center gap-0.5" style={{color:tab===n.k?T.accentText:T.faint}}><Em size={18}>{n.e}</Em><span className="text-[10px] font-medium">{n.l}</span></button>))}
+              </div>
+            </nav>
+            {isAdmin&&(tab==="dash"||tab==="hold")&&<button onClick={()=>setModal({mode:"add"})} className="fixed bottom-20 right-5 z-20 w-14 h-14 rounded-full flex items-center justify-center shadow-lg active:scale-95" style={{background:T.grad}}><Em size={26}>➕</Em></button>}
+            {modal&&<ItemModal modal={modal} cur={cur} rates={rates} onClose={()=>setModal(null)} onSave={saveItem}/>}
+            {viewer&&<AttViewer item={viewer} onClose={()=>setViewer(null)}/>}
+          </div>
+          <PrintReport {...{m,cur,inPort,sold,gifted}}/>
+        </div>
+      </ThemeCtx.Provider>
+    </AuthCtx.Provider>
+  );
+}
+
+/* ── DASHBOARD ── */
+function KPI({label,value,sub,emoji,accent}){const T=useT();return <Card><div className="flex items-start justify-between"><span className="text-xs" style={{color:T.dim}}>{label}</span>{emoji&&<Em size={16} style={{color:accent||T.faint}}>{emoji}</Em>}</div><div className="mt-1.5 text-lg font-bold" style={{color:accent||T.text}}>{value}</div>{sub&&<div className="text-[11px] mt-0.5" style={{color:T.faint}}>{sub}</div>}</Card>;}
+function NoData(){const T=useT();return <div className="h-[100px] flex items-center justify-center text-sm" style={{color:T.faint}}>No data yet</div>;}
+
+function Dashboard({m,cur,byType,byLoc,locBD,inPort,sold,gifted,items,setItems,onAdd}){
+  const T=useT();const{isAdmin}=useAuth();
+  const empty=inPort.length===0&&sold.length===0&&gifted.length===0;
+  if(empty)return(
+    <div className="text-center py-16">
+      <div className="w-20 h-20 mx-auto rounded-3xl flex items-center justify-center mb-4" style={{background:T.surface,border:`1px solid ${T.border}`}}><Em size={40}>🪙</Em></div>
+      <h2 className="text-xl font-bold mb-1" style={{color:T.accentText}}>Your vault is empty</h2>
+      <p className="text-sm mb-6 max-w-xs mx-auto" style={{color:T.dim}}>Add your first gold item, or load sample data.</p>
+      {isAdmin&&<div className="flex flex-col gap-2 items-center">
+        <button onClick={onAdd} className="px-6 py-2.5 rounded-xl font-semibold" style={{background:T.grad,color:"#1a1a1a"}}>+ Add gold item</button>
+        <button onClick={()=>setItems([...items,...SAMPLE(cur)])} className="px-6 py-2.5 rounded-xl font-medium flex items-center gap-2" style={{color:T.dim,border:`1px solid ${T.border}`}}><Em size={16}>✨</Em> Load sample data ({cur})</button>
+      </div>}
+    </div>
+  );
+  return(
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <KPI label="Total Invested" value={fmt(m.invested,cur)} emoji="💼" sub={`${inPort.length} items held`}/>
+        <KPI label="Current Value" value={fmt(m.current,cur)} emoji="🪙" accent={T.accentText}/>
+        <KPI label="Unrealized P&L" value={fmt(m.unreal,cur)} emoji={m.unreal>=0?"📈":"📉"} accent={m.unreal>=0?T.pos:T.neg} sub={`${m.unrealPct>=0?"+":""}${m.unrealPct.toFixed(2)}%`}/>
+        <KPI label="Realized P&L" value={fmt(m.realized,cur)} emoji="💵" accent={m.realized>=0?T.pos:T.neg} sub={`${sold.length} sold`}/>
+        <KPI label="Total Weight" value={fmtW(m.totalWeight)} emoji="⚖️" sub={`Pure 24K eq: ${fmtW(m.pureEq)}`}/>
+        <KPI label="Gifted (cost)" value={fmt(m.giftedCost,cur)} emoji="🎁" sub={`${gifted.length} gifted`}/>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Card><div className="text-sm font-semibold mb-2" style={{color:T.dim}}>Value by Type</div>{byType.length?<Donut data={byType} cur={cur}/>:<NoData/>}</Card>
+        <Card><div className="text-sm font-semibold mb-2" style={{color:T.dim}}>Value by Location</div>{byLoc.length?<Donut data={byLoc} cur={cur}/>:<NoData/>}</Card>
+      </div>
+      <Card><div className="text-sm font-semibold mb-3" style={{color:T.dim}}>Invested vs Current</div><CompareBar invested={m.invested} current={m.current} cur={cur}/></Card>
+      {locBD.length>0&&<Card>
+        <div className="text-sm font-semibold mb-3" style={{color:T.dim}}>Where your gold is stored</div>
+        <div className="space-y-2">
+          {locBD.map(l=>{const pct=m.current?(l.val/m.current)*100:0;return(
+            <div key={l.loc}><div className="flex items-center justify-between text-sm mb-1"><span className="flex items-center gap-2" style={{color:T.dim}}><Em size={14}>{LOC_EMO[l.loc]||"💼"}</Em>{l.loc}</span><span style={{color:T.faint}}>{fmt(l.val,cur)} · {fmtW(l.wt)}</span></div>
+            <div className="h-2 rounded-full overflow-hidden" style={{background:T.surface2}}><div className="h-full rounded-full" style={{width:pct+"%",background:T.grad}}/></div></div>
+          );})}
+        </div>
+      </Card>}
+    </div>
+  );
+}
+
+/* ── HOLDINGS ── */
+function Holdings({filtered,cur,rates,search,setSearch,statusFilter,setStatusFilter,onAdd,onEdit,onSell,onGift,onDelete,onRevert,onView}){
+  const T=useT();const{isAdmin}=useAuth();
+  const tabs=["All","In Portfolio","Sold","Gifted"];
+  return(
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{background:T.surface,border:`1px solid ${T.border}`}}><Em size={16} style={{color:T.faint}}>🔍</Em><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…" className="bg-transparent outline-none text-sm flex-1" style={{color:T.text}}/></div>
+      <div className="flex gap-2 overflow-x-auto pb-1">{tabs.map(t=><button key={t} onClick={()=>setStatusFilter(t)} className="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap" style={statusFilter===t?{background:T.accent,color:"#1a1a1a",border:`1px solid ${T.accent}`}:{border:`1px solid ${T.border}`,color:T.dim}}>{t}</button>)}</div>
+      {filtered.length===0?<div className="text-center py-12 text-sm" style={{color:T.faint}}>No items here.{isAdmin&&<> <button onClick={onAdd} style={{color:T.accentText}} className="underline">Add one</button>.</>}</div>
+        :filtered.map(it=>{
+          const cost=itemCost(it),cv=curVal(it,rates);
+          const pnl=it.status==="Sold"?saleProceeds(it)-cost:it.status==="Gifted"?0:cv-cost;
+          const badge=it.status==="Sold"?{t:"SOLD",c:"#f59e0b"}:it.status==="Gifted"?{t:"GIFTED",c:"#a78bfa"}:{t:"HELD",c:T.accent};
+          const ac=(it.attachments||[]).length;
+          return(<Card key={it.id}>
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold truncate" style={{color:T.text}}>{it.name||it.type}</span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{background:badge.c+"22",color:badge.c}}>{badge.t}</span>
+                  {ac>0&&<button onClick={()=>onView(it)} className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1" style={{background:T.surface2,color:T.dim}}><Em size={10}>📎</Em>{ac}</button>}
+                </div>
+                <div className="text-xs mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5" style={{color:T.faint}}><span>{it.type}·{it.purity}</span><span>{fmtW(it.weight)}</span><span className="flex items-center gap-1"><Em size={11}>{LOC_EMO[it.location]||"💼"}</Em>{it.location}</span><span>{it.purchaseDate}</span></div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="font-bold" style={{color:it.status==="In Portfolio"?T.accentText:T.text}}>{it.status==="In Portfolio"?fmt(cv,cur):it.status==="Sold"?fmt(saleProceeds(it),cur):fmt(cost,cur)}</div>
+                {it.status!=="Gifted"&&<div className="text-[11px]" style={{color:pnl>0?T.pos:pnl<0?T.neg:T.faint}}>{pnl>=0?"+":""}{fmt(pnl,cur)}</div>}
+                {it.status==="Gifted"&&<div className="text-[11px]" style={{color:T.faint}}>to {it.giftRecipient}</div>}
+              </div>
+            </div>
+            <div className="mt-2 pt-2 flex items-center justify-between text-xs" style={{borderTop:`1px solid ${T.border}`,color:T.faint}}>
+              <span>Cost {fmt(cost,cur)}{it.dealer?` · ${it.dealer}`:""}</span>
+              <div className="flex items-center gap-1">
+                {ac>0&&<IBtn emoji="📎" title="Attachments" onClick={()=>onView(it)}/>}
+                {isAdmin&&it.status==="In Portfolio"&&<><IBtn emoji="💵" title="Sell" onClick={()=>onSell(it)}/><IBtn emoji="🎁" title="Gift" onClick={()=>onGift(it)}/></>}
+                {isAdmin&&it.status!=="In Portfolio"&&<IBtn emoji="↩️" title="Revert" onClick={()=>onRevert(it.id)}/>}
+                {isAdmin&&<><IBtn emoji="✏️" title="Edit" onClick={()=>onEdit(it)}/><IBtn emoji="🗑️" title="Delete" onClick={()=>onDelete(it.id)} danger/></>}
+              </div>
+            </div>
+          </Card>);
+        })}
+    </div>
+  );
+}
+
+/* ── REPORTS ── */
+function Reports({m,cur,inPort,sold,gifted,onExcel,onPDF}){
+  const T=useT();
+  return(<div className="space-y-4">
+    <Card>
+      <div className="flex items-center gap-2 mb-1"><Em size={18}>📄</Em><span className="font-semibold">Download reports</span></div>
+      <p className="text-xs mb-4" style={{color:T.faint}}>Export your portfolio in {cur}.</p>
+      <div className="grid grid-cols-2 gap-3">
+        <button onClick={onExcel} className="py-3 rounded-xl font-semibold flex items-center justify-center gap-2" style={{background:T.grad,color:"#1a1a1a"}}><Em size={18}>📊</Em> Excel</button>
+        <button onClick={onPDF} className="py-3 rounded-xl font-semibold flex items-center justify-center gap-2" style={{color:T.text,border:`1px solid ${T.border}`}}><Em size={18}>⬇️</Em> PDF/Print</button>
+      </div>
+    </Card>
+    <Card>
+      <div className="text-sm font-semibold mb-3" style={{color:T.dim}}>Snapshot ({cur})</div>
+      <Row k="Items held" v={inPort.length}/><Row k="Total weight" v={fmtW(m.totalWeight)}/><Row k="Pure gold (24K eq.)" v={fmtW(m.pureEq)}/><Row k="Total invested" v={fmt(m.invested,cur)}/>
+      <Row k="Current value" v={fmt(m.current,cur)} gold/>
+      <Row k="Unrealized P&L" v={`${m.unreal>=0?"+":""}${fmt(m.unreal,cur)} (${m.unrealPct.toFixed(2)}%)`} color={m.unreal>=0?T.pos:T.neg}/>
+      <Row k="Realized P&L" v={fmt(m.realized,cur)} color={m.realized>=0?T.pos:T.neg}/><Row k="Gifted cost" v={fmt(m.giftedCost,cur)}/>
+    </Card>
+  </div>);
+}
+function Row({k,v,gold,color}){const T=useT();return <div className="flex justify-between py-1.5 text-sm last:border-0" style={{borderBottom:`1px solid ${T.border}`}}><span style={{color:T.dim}}>{k}</span><span className="font-semibold" style={{color:color||(gold?T.accentText:T.text)}}>{v}</span></div>;}
+
+/* ── SETTINGS ── */
+function SettingsView({settings,setSettings,cur,users,setUsers,onExport,onImport,onLock}){
+  const T=useT();const{isAdmin,user}=useAuth();
+  const[addUser,setAddUser]=useState(false),[newName,setNewName]=useState(""),[newPin,setNewPin]=useState("");
+  const r=settings.rates[cur],theme=settings.theme||defaultSettings.theme;
+  const setRate=(p,v)=>setSettings({...settings,rates:{...settings.rates,[cur]:{...settings.rates[cur],[p]:v}}});
+  const setTheme=patch=>setSettings({...settings,theme:{...theme,...patch}});
+  async function addViewer(){
+    if(!newName.trim()||newPin.length<4){alert("Enter name and 4-digit PIN.");return;}
+    if(users.length>=3){alert("Max 3 users.");return;}
+    const pinHash=await hashPin(newPin);
+    setUsers([...users,{id:uid(),name:newName.trim(),role:"viewer",pinHash}]);
+    setNewName("");setNewPin("");setAddUser(false);
+  }
+  function removeUser(id){if(confirm("Remove this viewer?"))setUsers(users.filter(u=>u.id!==id));}
+  return(<div className="space-y-4">
+    <Card>
+      <div className="flex items-center gap-2 mb-3"><Em size={18}>🎨</Em><span className="font-semibold">Appearance</span></div>
+      <div className="flex gap-2 mb-4">{[["dark","Dark","🌙"],["light","Light","☀️"]].map(([mode,label,e])=>(<button key={mode} onClick={()=>setTheme({mode})} className="flex-1 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2" style={theme.mode===mode?{background:T.grad,color:"#1a1a1a"}:{border:`1px solid ${T.border}`,color:T.dim}}><Em size={15}>{e}</Em>{label}</button>))}</div>
+      <span className="text-[11px] mb-2 block" style={{color:T.dim}}>Accent colour</span>
+      <div className="flex gap-3 flex-wrap">{ACCENT_LIST.map(([key,name])=>(<button key={key} onClick={()=>setTheme({accent:key})} className="flex flex-col items-center gap-1"><span className="w-10 h-10 rounded-full block" style={{background:`linear-gradient(135deg,${ACCENTS[key].main},${ACCENTS[key].light})`,outline:theme.accent===key?`2.5px solid ${T.text}`:"none",outlineOffset:2}}/><span className="text-[10px]" style={{color:theme.accent===key?T.text:T.faint}}>{name}</span></button>))}</div>
+    </Card>
+    {isAdmin&&<Card>
+      <div className="flex items-center gap-2 mb-3"><Em size={18}>🔒</Em><span className="font-semibold">Auto-lock</span></div>
+      <div className="flex items-center justify-between gap-3"><span className="text-sm" style={{color:T.dim}}>Lock after inactivity</span>
+        <TSel value={settings.lockTimeout??5} onChange={e=>setSettings({...settings,lockTimeout:Number(e.target.value)})}><option value={1}>1 min</option><option value={5}>5 min</option><option value={15}>15 min</option><option value={30}>30 min</option><option value={0}>Never</option></TSel>
+      </div>
+    </Card>}
+    {isAdmin&&<Card>
+      <div className="flex items-center gap-2 mb-1"><Em size={18}>🪙</Em><span className="font-semibold">Gold rates — {cur}</span></div>
+      <p className="text-xs mb-3" style={{color:T.faint}}>Enter 24K rate manually — other purities auto-derive.</p>
+      {PURITIES.map(p=>(<div key={p} className="flex items-center justify-between py-2 last:border-0" style={{borderBottom:`1px solid ${T.border}`}}>
+        <div><span className="font-semibold" style={{color:T.text}}>{p}</span>{p!=="24K"&&<span className="text-[11px] ml-2" style={{color:T.faint}}>auto: {fmt(num(r["24K"])*PURITY[p],cur)}/g</span>}</div>
+        <div className="flex items-center gap-1"><span className="text-sm" style={{color:T.faint}}>{SYM[cur]}</span><input type="number" value={r[p]} placeholder={p==="24K"?"rate/g":"(auto)"} onChange={e=>setRate(p,e.target.value)} className="w-28 rounded-lg px-2 py-1.5 text-sm text-right" style={{background:T.inputBg,border:`1px solid ${T.border}`,color:T.text}}/></div>
+      </div>))}
+    </Card>}
+    {isAdmin&&<Card>
+      <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><Em size={18}>👥</Em><span className="font-semibold">Users ({users.length}/3)</span></div>{users.length<3&&<button onClick={()=>setAddUser(!addUser)} className="text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={{background:T.grad,color:"#1a1a1a"}}><Em size={13}>➕</Em> Add viewer</button>}</div>
+      <div className="space-y-2 mb-3">{users.map(u=>(<div key={u.id} className="flex items-center justify-between py-2 px-3 rounded-xl" style={{background:T.surface2}}>
+        <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-full flex items-center justify-center text-base font-bold shrink-0" style={{background:T.grad,color:"#1a1a1a"}}>{(u.name||"?")[0].toUpperCase()}</div>
+          <div><div className="font-medium text-sm" style={{color:T.text}}>{u.name}{u.id===user?.id&&<span className="text-[10px] ml-1" style={{color:T.faint}}>(you)</span>}</div><div className="text-[11px] flex items-center gap-1 mt-0.5" style={{color:u.role==="admin"?T.accentText:T.faint}}><Em size={10}>{u.role==="admin"?"🛡️":"👁️"}</Em>{u.role==="admin"?"Admin":"Viewer"}</div></div>
+        </div>{u.role!=="admin"&&<IBtn emoji="🗑️" title="Remove" onClick={()=>removeUser(u.id)} danger/>}
+      </div>))}</div>
+      {addUser&&<div className="rounded-xl p-3 space-y-3 mb-3" style={{background:T.surface2,border:`1px solid ${T.border}`}}>
+        <p className="text-xs font-semibold" style={{color:T.accentText}}>New viewer account</p>
+        <TIn value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Name (e.g. Wife)"/>
+        <TIn type="text" inputMode="numeric" value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="4-digit PIN" maxLength={4}/>
+        <div className="flex gap-2"><button onClick={addViewer} className="flex-1 py-2 rounded-xl text-sm font-semibold" style={{background:T.grad,color:"#1a1a1a"}}>Add</button><button onClick={()=>{setAddUser(false);setNewName("");setNewPin("");}} className="flex-1 py-2 rounded-xl text-sm" style={{border:`1px solid ${T.border}`,color:T.dim}}>Cancel</button></div>
+      </div>}
+      <div className="rounded-xl p-3 text-[11px]" style={{background:T.surface2,color:T.faint}}>📱 Each phone keeps its own data. To share your portfolio with family on their own phones, use <b>Export</b> below and send them the file to <b>Import</b>.</div>
+    </Card>}
+    {isAdmin&&<Card>
+      <div className="flex items-center gap-2 mb-1"><Em size={18}>💾</Em><span className="font-semibold">Backup &amp; restore</span></div>
+      <p className="text-xs mb-3" style={{color:T.faint}}>Export everything to one file; import it on any device to sync.</p>
+      <div className="grid grid-cols-2 gap-3">
+        <button onClick={onExport} className="py-3 rounded-xl font-semibold flex items-center justify-center gap-2" style={{background:T.grad,color:"#1a1a1a"}}><Em size={18}>⬇️</Em> Export</button>
+        <label className="py-3 rounded-xl font-semibold flex items-center justify-center gap-2 cursor-pointer" style={{color:T.text,border:`1px solid ${T.border}`}}><Em size={18}>📂</Em> Import<input type="file" accept="application/json,.json" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)onImport(f);e.target.value="";}}/></label>
+      </div>
+    </Card>}
+    <Card><button onClick={onLock} className="w-full py-3 rounded-xl font-medium flex items-center justify-center gap-2" style={{color:T.neg,border:`1px solid ${T.border}`}}><Em size={16}>🚪</Em> Lock vault now</button></Card>
+  </div>);
+}
+
+/* ── ITEM MODAL ── */
+function ItemModal({modal,cur,rates,onClose,onSave}){
+  const T=useT();const{mode,item}=modal;
+  const isSell=mode==="sell",isGift=mode==="gift",isEdit=mode==="edit";
+  const[f,setF]=useState(()=>item?{...item}:{name:"",type:"Coin",weight:"",purity:"24K",purchaseDate:today(),ratePerGram:"",making:"",tax:"",other:"",dealer:"",location:"Home",currency:cur,notes:"",status:"In Portfolio",attachments:[]});
+  const[atts,setAtts]=useState(()=>(item?.attachments||[]).map(a=>({...a})));
+  const[attData,setAttData]=useState({}),[toDelete,setToDelete]=useState([]),[busy,setBusy]=useState(false);
+  const set=(k,v)=>setF({...f,[k]:v});
+  useEffect(()=>{if(isEdit&&item?.attachments?.length)(async()=>{const map={};for(const a of item.attachments){const d=await getAtt(a.id);if(d)map[a.id]=d;}setAttData(map);})();},[]);
+  async function handleFiles(e){
+    const files=Array.from(e.target.files||[]);e.target.value="";setBusy(true);
+    for(const file of files){
+      const isPdf=file.type==="application/pdf"||/\.pdf$/i.test(file.name);
+      const isImg=file.type.startsWith("image/")||/\.(jpe?g|png)$/i.test(file.name);
+      if(!isPdf&&!isImg){alert(`Unsupported: ${file.name}`);continue;}
+      let data;try{data=isImg?await compress(file):await readDU(file);}catch{continue;}
+      if(data.length>4800000){alert(`${file.name} too large.`);continue;}
+      const id=uid();setAttData(p=>({...p,[id]:data}));setAtts(p=>[...p,{id,name:file.name||"file",type:isPdf?"pdf":"image",_new:true}]);
+    }setBusy(false);
+  }
+  function removeAtt(a){setAtts(p=>p.filter(x=>x.id!==a.id));setAttData(p=>{const c={...p};delete c[a.id];return c;});if(!a._new)setToDelete(p=>[...p,a.id]);}
+  async function submit(){
+    if(isSell){onSave({...item,status:"Sold",saleDate:f.saleDate||today(),saleRatePerGram:f.saleRatePerGram,buyer:f.buyer,saleNotes:f.saleNotes});return;}
+    if(isGift){onSave({...item,status:"Gifted",giftDate:f.giftDate||today(),giftRecipient:f.giftRecipient,giftNotes:f.giftNotes});return;}
+    if(!f.weight||!f.ratePerGram){alert("Enter weight and purchase rate.");return;}
+    setBusy(true);
+    try{for(const a of atts)if(a._new&&attData[a.id])await putAtt(a.id,attData[a.id]);for(const id of toDelete)await delAtt(id);}catch(e){console.error(e);}
+    setBusy(false);
+    onSave({...f,attachments:atts.map(a=>({id:a.id,name:a.name,type:a.type}))});
+  }
+  const editing=mode==="add"||isEdit;
+  return(<div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center no-print" style={{background:T.overlay}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} className="w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] overflow-y-auto" style={{background:T.surface,border:`1px solid ${T.border}`}}>
+      <div className="sticky top-0 px-5 py-4 flex items-center justify-between" style={{background:T.surface,borderBottom:`1px solid ${T.border}`}}>
+        <span className="font-bold" style={{color:T.accentText}}>{isSell?"Sell item":isGift?"Gift item":isEdit?"Edit item":"Add gold item"}</span>
+        <button onClick={onClose} className="p-1.5 rounded-lg" style={{color:T.text}}><Em size={18}>✖️</Em></button>
+      </div>
+      <div className="p-5 space-y-3">
+        {editing&&<>
+          <Field label="Item name"><TIn value={f.name} onChange={e=>set("name",e.target.value)} placeholder="e.g. 10g PAMP Bar"/></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Type"><TSel value={f.type} onChange={e=>set("type",e.target.value)}>{TYPES.map(t=><option key={t}>{t}</option>)}</TSel></Field>
+            <Field label="Purity"><TSel value={f.purity} onChange={e=>set("purity",e.target.value)}>{PURITIES.map(p=><option key={p}>{p}</option>)}</TSel></Field>
+            <Field label="Weight (g)"><TIn type="number" value={f.weight} onChange={e=>set("weight",e.target.value)} placeholder="0"/></Field>
+            <Field label="Purchase date"><TIn type="date" value={f.purchaseDate} onChange={e=>set("purchaseDate",e.target.value)}/></Field>
+            <Field label={`Buy rate /g (${cur})`}><TIn type="number" value={f.ratePerGram} onChange={e=>set("ratePerGram",e.target.value)} placeholder="0"/></Field>
+            <Field label="Making charges"><TIn type="number" value={f.making} onChange={e=>set("making",e.target.value)} placeholder="0"/></Field>
+            <Field label="Tax / VAT / GST"><TIn type="number" value={f.tax} onChange={e=>set("tax",e.target.value)} placeholder="0"/></Field>
+            <Field label="Other expenses"><TIn type="number" value={f.other} onChange={e=>set("other",e.target.value)} placeholder="0"/></Field>
+            <Field label="Dealer / source"><TIn value={f.dealer} onChange={e=>set("dealer",e.target.value)} placeholder="Shop name"/></Field>
+            <Field label="Storage location"><TSel value={f.location} onChange={e=>set("location",e.target.value)}>{LOCATIONS.map(l=><option key={l}>{l}</option>)}</TSel></Field>
+          </div>
+          <Field label="Notes"><TArea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2}/></Field>
+          <div><span className="text-[11px] mb-1 block" style={{color:T.dim}}>Attachments (JPG, PNG, PDF)</span>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex items-center justify-center gap-2 py-3 rounded-lg text-sm cursor-pointer" style={{border:`1px dashed ${T.border}`,color:T.dim}}><Em size={16}>⬆️</Em>{busy?"Processing…":"Add files"}<input type="file" multiple accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" onChange={handleFiles} className="hidden"/></label>
+              <label className="flex items-center justify-center gap-2 py-3 rounded-lg text-sm cursor-pointer" style={{border:`1px dashed ${T.border}`,color:T.dim}}><Em size={16}>📷</Em>Take photo<input type="file" accept="image/*" capture="environment" onChange={handleFiles} className="hidden"/></label>
+            </div>
+            {atts.length>0&&<div className="grid grid-cols-3 gap-2 mt-2">{atts.map(a=>(<div key={a.id} className="relative rounded-lg overflow-hidden h-20 flex items-center justify-center" style={{background:T.surface2,border:`1px solid ${T.border}`}}>
+              {a.type==="image"&&attData[a.id]?<img src={attData[a.id]} alt={a.name} className="w-full h-full object-cover"/>:<div className="flex flex-col items-center px-1" style={{color:T.dim}}><Em size={20}>📄</Em><span className="text-[9px] mt-1 truncate w-full text-center">{a.name}</span></div>}
+              <button onClick={()=>removeAtt(a)} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 flex items-center justify-center text-white text-xs">✕</button>
+            </div>))}</div>}
+          </div>
+          <div className="text-xs rounded-lg p-2" style={{background:T.surface2,color:T.dim}}>Cost: <span style={{color:T.accentText}} className="font-semibold">{fmt(itemCost(f),cur)}</span> · Value: <span style={{color:T.accentText}} className="font-semibold">{fmt(curVal({...f,currency:cur},rates),cur)}</span></div>
+        </>}
+        {isSell&&<>
+          <p className="text-xs" style={{color:T.dim}}>Selling <b style={{color:T.text}}>{item.name||item.type}</b> · {fmtW(item.weight)}</p>
+          <div className="grid grid-cols-2 gap-3"><Field label="Sale date"><TIn type="date" value={f.saleDate||today()} onChange={e=>set("saleDate",e.target.value)}/></Field><Field label={`Sale rate /g`}><TIn type="number" value={f.saleRatePerGram||""} onChange={e=>set("saleRatePerGram",e.target.value)} placeholder="0"/></Field></div>
+          <Field label="Buyer"><TIn value={f.buyer||""} onChange={e=>set("buyer",e.target.value)}/></Field>
+          <Field label="Notes"><TArea value={f.saleNotes||""} onChange={e=>set("saleNotes",e.target.value)} rows={2}/></Field>
+        </>}
+        {isGift&&<>
+          <p className="text-xs" style={{color:T.dim}}>Gifting <b style={{color:T.text}}>{item.name||item.type}</b></p>
+          <div className="grid grid-cols-2 gap-3"><Field label="Gift date"><TIn type="date" value={f.giftDate||today()} onChange={e=>set("giftDate",e.target.value)}/></Field><Field label="Recipient"><TIn value={f.giftRecipient||""} onChange={e=>set("giftRecipient",e.target.value)}/></Field></div>
+          <Field label="Notes"><TArea value={f.giftNotes||""} onChange={e=>set("giftNotes",e.target.value)} rows={2}/></Field>
+        </>}
+        <button disabled={busy} onClick={submit} className="w-full py-3 rounded-xl font-semibold mt-2 disabled:opacity-60" style={{background:T.grad,color:"#1a1a1a"}}>{busy?"Saving…":isSell?"Mark as sold":isGift?"Mark as gifted":isEdit?"Save changes":"Add to vault"}</button>
+      </div>
+    </div>
+  </div>);
+}
+
+function AttViewer({item,onClose}){
+  const T=useT();const[data,setData]=useState({}),[loading,setLoading]=useState(true),[zoom,setZoom]=useState(null);
+  useEffect(()=>{(async()=>{const map={};for(const a of(item.attachments||[])){const d=await getAtt(a.id);if(d)map[a.id]=d;}setData(map);setLoading(false);})();},[]);
+  return(<div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center no-print" style={{background:T.overlay}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} className="w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] overflow-y-auto" style={{background:T.surface,border:`1px solid ${T.border}`}}>
+      <div className="sticky top-0 px-5 py-4 flex items-center justify-between" style={{background:T.surface,borderBottom:`1px solid ${T.border}`}}><span className="font-bold flex items-center gap-2" style={{color:T.accentText}}><Em size={16}>📎</Em>{item.name||item.type}</span><button onClick={onClose} className="p-1.5 rounded-lg" style={{color:T.text}}>✖️</button></div>
+      <div className="p-5 space-y-3">
+        {loading?<div className="text-center py-8 text-sm" style={{color:T.faint}}>Loading…</div>:(item.attachments||[]).length===0?<div className="text-center py-8 text-sm" style={{color:T.faint}}>No attachments.</div>:(item.attachments||[]).map(a=>(
+          <div key={a.id} className="rounded-xl p-3" style={{background:T.surface2,border:`1px solid ${T.border}`}}>
+            <div className="flex items-center justify-between mb-2"><span className="text-sm flex items-center gap-2 truncate" style={{color:T.dim}}><Em size={15}>{a.type==="image"?"🖼️":"📄"}</Em><span className="truncate">{a.name}</span></span>{data[a.id]&&<a href={data[a.id]} download={a.name} className="text-xs flex items-center gap-1 px-2 py-1 rounded-lg" style={{border:`1px solid ${T.border}`,color:T.dim}}>⬇️ Save</a>}</div>
+            {!data[a.id]?<div className="text-xs" style={{color:T.faint}}>Unavailable.</div>:a.type==="image"?<img src={data[a.id]} alt={a.name} onClick={()=>setZoom(data[a.id])} className="w-full max-h-72 object-contain rounded-lg cursor-zoom-in bg-black"/>:<iframe title={a.name} src={data[a.id]} className="w-full h-72 rounded-lg bg-white"/>}
+          </div>
+        ))}
+      </div>
+    </div>
+    {zoom&&<div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={()=>setZoom(null)}><img src={zoom} alt="zoom" className="max-w-full max-h-full object-contain"/></div>}
+  </div>);
+}
+
+function PrintReport({m,cur,inPort,sold,gifted}){
+  const th="border border-gray-400 px-2 py-1 text-left text-[11px] bg-gray-100";
+  const td="border border-gray-300 px-2 py-1 text-[11px]";
+  return(<div className="print-only text-black p-6" style={{fontFamily:"Times New Roman,serif"}}>
+    <h1 className="text-2xl font-bold" style={{color:"#8B6F1E"}}>GoldVault — Portfolio Report</h1>
+    <p className="text-sm">Currency: {cur} · Generated: {new Date().toLocaleString()}</p><hr className="my-3 border-gray-400"/>
+    <table className="w-1/2 border-collapse mb-4"><tbody>
+      {[["Items held",inPort.length],["Total weight",fmtW(m.totalWeight)],["Total invested",fmt(m.invested,cur)],["Current value",fmt(m.current,cur)],["Unrealized P&L",`${fmt(m.unreal,cur)} (${m.unrealPct.toFixed(2)}%)`],["Realized P&L",fmt(m.realized,cur)]].map(([k,v])=><tr key={k}><td className={td}>{k}</td><td className={td}>{v}</td></tr>)}
+    </tbody></table>
+    <h2 className="font-bold mb-1">Holdings</h2>
+    <table className="w-full border-collapse mb-4"><thead><tr>{["Name","Type","Wt(g)","Bought","Cost","Value","Location"].map(h=><th key={h} className={th}>{h}</th>)}</tr></thead>
+    <tbody>{inPort.map(i=><tr key={i.id}><td className={td}>{i.name||i.type}</td><td className={td}>{i.type}</td><td className={td}>{num(i.weight)}</td><td className={td}>{i.purchaseDate}</td><td className={td}>{fmt(itemCost(i),cur)}</td><td className={td}>{fmt(curVal(i,{}),cur)}</td><td className={td}>{i.location}</td></tr>)}</tbody></table>
+  </div>);
+}
+
+const root=ReactDOM.createRoot(document.getElementById("root"));
+root.render(<GoldVault/>);
+</script>
+<script>
+if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});}
+</script>
+</body>
+</html>
