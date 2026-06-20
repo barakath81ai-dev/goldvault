@@ -1,0 +1,10 @@
+{
+  "name": "GoldVault",
+  "short_name": "GoldVault",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#D4AF37",
+  "orientation": "portrait",
+  "icons": []
+}
